@@ -1,0 +1,64 @@
+{
+  "name": "@rweda/makerchip-view-client",
+  "version": "0.1.0",
+  "description": "A thin, promise-based client for the Makerchip Third-Party View API (embed a view/iframe in the Makerchip IDE).",
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "author": "Redwood EDA, LLC",
+  "keywords": [
+    "makerchip",
+    "tl-verilog",
+    "iframe",
+    "postmessage",
+    "view",
+    "pane",
+    "ide",
+    "embed",
+    "rpc"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rweda/makerchip-view-client.git"
+  },
+  "homepage": "https://github.com/rweda/makerchip-view-client#readme",
+  "bugs": "https://github.com/rweda/makerchip-view-client/issues",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "unpkg": "./dist/index.global.js",
+  "jsdelivr": "./dist/index.global.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "happy-dom": "^15.11.7",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
