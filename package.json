@@ -1,6 +1,6 @@
 {
   "name": "@rweda/makerchip-view-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A thin, promise-based client for the Makerchip Third-Party View API (embed a view/iframe in the Makerchip IDE).",
   "type": "module",
   "sideEffects": false,

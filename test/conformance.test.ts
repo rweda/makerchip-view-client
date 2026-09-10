@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { connect, WIRE_VERSION, type ConnectOptions, type ViewClient } from "../src/index";
+import {
+  connect,
+  sameOrigin,
+  WIRE_VERSION,
+  WIRE_MIN_VERSION,
+  WIRE_MAX_VERSION,
+  type ConnectOptions,
+  type ViewClient,
+} from "../src/index";
 
 /** Track created clients so we can tear them down between tests. */
 const created: ViewClient[] = [];
@@ -29,11 +37,15 @@ afterEach(() => {
 });
 
 describe("wire conformance", () => {
-  it("posts a ready handshake after connect (autoReady)", async () => {
+  it("posts a ready handshake advertising its supported version range (autoReady)", async () => {
     const { peer, sent } = makePeer();
     connectT({ peerWindow: peer });
     await Promise.resolve(); // let the microtask-scheduled ready() run
-    expect(sent).toContainEqual({ v: WIRE_VERSION, type: "ready" });
+    expect(sent).toContainEqual({
+      v: WIRE_VERSION,
+      type: "ready",
+      versions: { min: WIRE_MIN_VERSION, max: WIRE_MAX_VERSION },
+    });
   });
 
   it("does not send ready when autoReady is false, until ready() is called", () => {
@@ -132,5 +144,47 @@ describe("wire conformance", () => {
     const view = connectT({ peerWindow: undefined });
     expect(view.embedded).toBe(false);
     await expect(view.call("x")).rejects.toThrow(/not embedded/);
+  });
+
+  it("exposes the negotiated wire version (the floor by default)", () => {
+    const { peer } = makePeer();
+    const view = connectT({ peerWindow: peer, autoReady: false });
+    expect(view.wireVersion).toBe(WIRE_VERSION);
+  });
+
+  it("exposes a sender's origin/author stamps and a sameOrigin() helper on delivered events", () => {
+    const { peer } = makePeer();
+    const view = connectT({ peerWindow: peer, autoReady: false });
+    const seen: any[] = [];
+    view.on("sourceAsm", (_p, env) => seen.push(env));
+    deliver({
+      v: WIRE_VERSION,
+      source: "warpv",
+      origin: "https://vendor.example",
+      author: "platform.ai",
+      type: "sourceAsm",
+      payload: { text: "add x1" },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].origin).toBe("https://vendor.example");
+    expect(seen[0].author).toBe("platform.ai");
+    // location.origin under jsdom/happy-dom is not the vendor origin, so sameOrigin() is false.
+    expect(seen[0].sameOrigin()).toBe(false);
+  });
+
+  it("static sameOrigin() compares two origins, treating absent as non-matching", () => {
+    expect(sameOrigin("https://a.example", "https://a.example")).toBe(true);
+    expect(sameOrigin("https://a.example", "https://b.example")).toBe(false);
+    expect(sameOrigin(undefined, undefined)).toBe(false);
+    expect(sameOrigin("https://a.example", undefined)).toBe(false);
+  });
+
+  it("ignores messages whose wire version it cannot parse", () => {
+    const { peer } = makePeer();
+    const view = connectT({ peerWindow: peer, autoReady: false });
+    const seen: any[] = [];
+    view.on("theme", (p) => seen.push(p));
+    deliver({ v: WIRE_MAX_VERSION + 1, source: "ide", type: "theme", payload: { dark: true } });
+    expect(seen).toEqual([]);
   });
 });

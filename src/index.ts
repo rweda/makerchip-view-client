@@ -20,17 +20,47 @@
  * for the authoritative message shapes.
  */
 
-/** The wire-protocol version this client speaks. */
+/** The default wire-protocol version this client frames at — the permanent floor. */
 export const WIRE_VERSION = 1 as const;
+
+/** The lowest wire version this client can parse. */
+export const WIRE_MIN_VERSION = 1 as const;
+
+/** The highest wire version this client can parse. Advertised (with the min) on the `ready`
+ * handshake so the IDE can select the highest version in common. */
+export const WIRE_MAX_VERSION = 1 as const;
+
+/** Whether a wire version is one this client can parse (the redundant per-frame guard). */
+function understandsWire(v: unknown): v is number {
+  return typeof v === "number" && v >= WIRE_MIN_VERSION && v <= WIRE_MAX_VERSION;
+}
+
+/**
+ * Compare two web origins. True only when both are present and identical. Origins are the
+ * IDE-normalized scalar strings carried on an envelope's `origin` stamp (e.g.
+ * `"https://vendor.example"`); an absent origin never matches.
+ */
+export function sameOrigin(a: string | undefined, b: string | undefined): boolean {
+  return a != null && b != null && a === b;
+}
 
 /** A bus-event envelope as delivered from the IDE to the view. */
 export interface BusEnvelope<T = unknown> {
   v: number;
   /** The event source, stamped by the IDE (e.g. "ide"). */
   source: string;
+  /** The sender's effective web origin, resolved and stamped by the IDE. Absent for pure
+   * first-party events and origin-less senders. Never set by a view. */
+  origin?: string;
+  /** The root principal the sender acts under (`ide` / `platform` / `platform.<agent>`), stamped by
+   * the IDE. Present only when it differs from `source`. Never set by a view. */
+  author?: string;
   type: string;
   payload: T;
   target?: string | string[];
+  /** True when the sender's `origin` matches this view's own origin (`location.origin`). Attached
+   * by the client on delivery; the usual sender-trust check. */
+  sameOrigin?(): boolean;
 }
 
 /** Handler invoked for an inbound bus event of a given `type`. */
@@ -65,6 +95,11 @@ export interface ConnectOptions {
 export interface ViewClient {
   /** True when a peer window was found (the page is embedded in the IDE). */
   readonly embedded: boolean;
+
+  /** The negotiated wire version this client frames outbound at and validates inbound against.
+   * The floor ({@link WIRE_VERSION}) until a multi-version client learns the IDE's selection from
+   * `getContext().wire.selected`. */
+  readonly wireVersion: number;
 
   /**
    * Call a method on the IDE and await its result. Rejects if the view is not
@@ -128,6 +163,12 @@ export function connect(options: ConnectOptions = {}): ViewClient {
   let seq = 0;
   let readySent = false;
   let destroyed = false;
+  // The version this client frames outbound at. Stays at the floor unless a future multi-version
+  // client narrows it from the IDE's negotiated selection.
+  let wireVersion: number = WIRE_VERSION;
+  // This view's own web origin, for sameOrigin() checks against a sender's stamped origin.
+  const selfOrigin: string | undefined =
+    typeof location !== "undefined" ? location.origin : undefined;
 
   function post(message: any): void {
     if (peer) peer.postMessage(message, targetOrigin);
@@ -139,7 +180,9 @@ export function connect(options: ConnectOptions = {}): ViewClient {
     if (peer && ev.source && ev.source !== (peer as unknown)) return;
 
     const m: any = ev.data;
-    if (!m || m.v !== WIRE_VERSION) return;
+    // Redundant per-frame guard: reject only versions this client cannot parse. The IDE reframes
+    // each event into the negotiated version, so an in-range `v` is expected.
+    if (!m || !understandsWire(m.v)) return;
 
     if (m.kind === "rpc-result" || m.kind === "rpc-error") {
       const p = pending.get(m.id);
@@ -161,9 +204,14 @@ export function connect(options: ConnectOptions = {}): ViewClient {
     if (typeof m.type === "string" && m.type !== "ready") {
       const set = handlers.get(m.type);
       if (!set) return;
+      // Attach the recipient origin helper (the stamps themselves ride on `m`).
+      const env = m as BusEnvelope;
+      if (typeof env.sameOrigin !== "function") {
+        env.sameOrigin = () => sameOrigin(env.origin, selfOrigin);
+      }
       for (const h of [...set]) {
         try {
-          h(m.payload, m as BusEnvelope);
+          h(m.payload, env);
         } catch (e) {
           // Handler errors are the consumer's concern; surface, don't swallow.
           // eslint-disable-next-line no-console
@@ -176,20 +224,24 @@ export function connect(options: ConnectOptions = {}): ViewClient {
   async function handleRpcCall(m: any): Promise<void> {
     const fn = exposed[m.method];
     if (typeof fn !== "function") {
-      post({ v: WIRE_VERSION, kind: "rpc-call-error", id: m.id, error: `unknown method: ${m.method}` });
+      post({ v: wireVersion, kind: "rpc-call-error", id: m.id, error: `unknown method: ${m.method}` });
       return;
     }
     try {
       const result = await fn(...(m.args ?? []));
-      post({ v: WIRE_VERSION, kind: "rpc-call-result", id: m.id, result });
+      post({ v: wireVersion, kind: "rpc-call-result", id: m.id, result });
     } catch (e: any) {
-      post({ v: WIRE_VERSION, kind: "rpc-call-error", id: m.id, error: String(e?.message ?? e) });
+      post({ v: wireVersion, kind: "rpc-call-error", id: m.id, error: String(e?.message ?? e) });
     }
   }
 
   const client: ViewClient = {
     get embedded() {
       return embedded;
+    },
+
+    get wireVersion() {
+      return wireVersion;
     },
 
     call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
@@ -209,13 +261,13 @@ export function connect(options: ConnectOptions = {}): ViewClient {
         }
         pending.set(id, entry);
       });
-      post({ v: WIRE_VERSION, kind: "rpc", id, target: "ide", method, args });
+      post({ v: wireVersion, kind: "rpc", id, target: "ide", method, args });
       return promise;
     },
 
     emit(type: string, payload?: unknown, opts?: { target?: string | string[] }): void {
       if (!embedded) return;
-      const env: any = { v: WIRE_VERSION, type, payload };
+      const env: any = { v: wireVersion, type, payload };
       if (opts?.target !== undefined) env.target = opts.target;
       post(env);
     },
@@ -244,7 +296,7 @@ export function connect(options: ConnectOptions = {}): ViewClient {
     ready(): void {
       if (!embedded || readySent) return;
       readySent = true;
-      post({ v: WIRE_VERSION, type: "ready" });
+      post({ v: wireVersion, type: "ready", versions: { min: WIRE_MIN_VERSION, max: WIRE_MAX_VERSION } });
     },
 
     destroy(): void {

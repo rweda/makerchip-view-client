@@ -83,6 +83,7 @@ are missed.
 
 - **`embedded: boolean`** — `true` when a peer window was found. When `false`,
   `call()` rejects, so a view can also run standalone.
+- **`wireVersion: number`** — the negotiated wire protocol version (currently `1`).
 - **`call<T>(method, ...args): Promise<T>`** — invoke an IDE method; resolves
   with its result or rejects on an error reply / timeout. IDE methods (e.g.
   `getContext`, `getCompileStatus`, `setStatus`) are documented with the IDE, not
@@ -92,7 +93,13 @@ are missed.
   view's `produces` contract.
 - **`on<T>(type, handler): () => void`** — register a handler for an inbound bus
   event (one of the types in the view's `subscribes` contract). Returns an
-  unsubscribe function. `handler(payload, envelope)`.
+  unsubscribe function. `handler(payload, envelope)`. The `envelope` carries the
+  IDE-resolved trust stamps `origin` (web origin of the responsible participant —
+  the nearest view in the sender's creation chain that has its own origin, when
+  known) and `author` (that participant's identity, present only when it differs
+  from `source`), plus `sameOrigin()` — `true` when the event came from a view
+  served from this view's own origin. These stamps are set by the IDE and cannot
+  be forged by a peer view.
 - **`off(type, handler): void`** — remove a handler.
 - **`expose(methods): void`** — register methods the IDE/host may call
   (host → view RPC), when the channel is opened with RPC enabled.
@@ -100,7 +107,8 @@ are missed.
   `autoReady: false`).
 - **`destroy(): void`** — remove the message listener and reject pending calls.
 
-Also exported: **`WIRE_VERSION`** and the TypeScript types
+Also exported: **`WIRE_VERSION`**, **`WIRE_MIN_VERSION`**, **`WIRE_MAX_VERSION`**,
+the **`sameOrigin(a, b)`** helper, and the TypeScript types
 `ViewClient`, `ConnectOptions`, `BusEnvelope`, `BusHandler`,
 `ExposedMethod`, `PostTarget`.
 
