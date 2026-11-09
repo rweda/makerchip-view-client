@@ -17,7 +17,8 @@ Zero runtime dependencies. Ships ESM, CommonJS, and a browser global (IIFE).
 > contract the *opener* declares when the view is created (`produces` /
 > `subscribes`) — not chosen at runtime. `emit`/`on` are the runtime mechanism
 > within that grant; the IDE drops outbound events not in `produces` and never
-> delivers types not in `subscribes`.
+> delivers types not in `subscribes`. Likewise, `call` (even `getContext`) and `expose` work only if the
+> contract sets `rpc: true`; otherwise the IDE refuses every call.
 
 > The wire protocol is the normative contract. This library is a faithful
 > binding over it — most views should use this client, but anything it does can
@@ -121,9 +122,42 @@ npm run build     # tsup → dist/ (ESM + CJS + IIFE + .d.ts)
 npm run typecheck # tsc --noEmit
 ```
 
-Publishing is automated: pushing a `v*` tag runs the `Publish` workflow, which
-tests, builds, and runs `npm publish --provenance`. Set an `NPM_TOKEN` repo
-secret (or configure npm trusted publishing / OIDC) first.
+### Releasing
+
+Pushing a `v*` tag runs the `Publish` workflow, which typechecks, tests, builds
+and runs `npm publish` using npm trusted publishing (OIDC — no `NPM_TOKEN`
+secret). Release with one command:
+
+```sh
+npm version <patch|minor|major>   # bumps package.json, commits, tags vX.Y.Z
+```
+
+A `postversion` hook pushes the commit and tag, which triggers the workflow.
+Prefer this over publishing locally, so releases are reproducible from CI.
+
+#### Status: the automated path has never actually completed
+
+Worth knowing before relying on it:
+
+- **Both published versions went out by hand.** 0.1.0 was never tagged, and
+  0.2.0 reached npm about fourteen minutes *before* its workflow run started.
+- **The v0.2.0 run failed**, in 14s, at `npm install -g npm@latest` — before
+  `npm publish` was ever reached. npm 12 had just shipped and requires Node
+  `^22.22.2 || ^24.15.0 || >=26.0.0`, while the job pinned Node 20:
+  `npm error code EBADENGINE`. Fixed since: the job now uses Node 22 and pins
+  `npm@^11`, so a new npm major cannot break it the same way. Leave it pinned.
+- **Neither 0.1.0 nor 0.2.0 carries a provenance attestation**, consistent with
+  both being manual publishes. Trusted publishing should attach one — treat the
+  first attestation on the registry as the signal that this path truly works.
+- **Trusted publishing is therefore unverified.** It may not be configured at
+  npmjs.com yet (package Settings -> Trusted Publisher -> repo
+  `rweda/makerchip-view-client`, workflow `.github/workflows/publish.yml`).
+  Confirm that before tagging the next release, or the job will get past the
+  npm upgrade and then fail at `npm publish`.
+- **The workflow can double-fire.** It triggers on both `push: tags: v*` and
+  `release: types: [published]`, so cutting a GitHub Release from a tag you
+  already pushed starts a second run that fails on the now-existing version.
+  Pick one trigger.
 
 ## License
 
